@@ -1,0 +1,79 @@
+public with sharing class SSE_Opportunity_Service {
+    
+    public static void processClosedWon(set<id> oppsToProcess){
+        Set<Id> participantsIds = new Set<Id>(); 
+        Set<Id> programRoundId = new Set<Id>();
+        map<id,boolean> affliatedOrNot = new Map<Id,Boolean>();
+        map<id,set<id>> contactToAcademic = new map<id,set<id>>();
+        set<id> notAffiliatedContacts = new set<id>();
+        map<id,Set<id>> prgRoundToParticipants = new map<id,Set<id>>();
+
+        
+        List<hed__Program_Enrollment__c> enrollmentList = new List<hed__Program_Enrollment__c>();
+        for(Opportunity opp : [select id,(select contactID,OpportunityId,contact.accountId from OpportunityContactRoles where Role = 'Participant'),
+                                            (select id,Product2.Program_Plan__c, Product2.Program_Round__c,Product2.Program_Plan__r.hed__Account__c from OpportunityLineItems)
+                                            from Opportunity 
+                                            where Id 
+                                            in : oppsToProcess]){
+            System.debug('Opps: '+ opp);                        
+            if(!opp.OpportunityContactRoles.isEmpty()){
+                for(OpportunityContactRole participants : opp.OpportunityContactRoles){
+                    System.debug('Participant'+ participants);
+                    hed__Program_Enrollment__c prEn = new hed__Program_Enrollment__c();
+                    prEn.hed__Contact__c = participants.contactID;
+                    prEn.hed__Account__c = participants.contact.accountId;
+                    prEn.hed__Program_Plan__c = opp.OpportunityLineItems[0].Product2.Program_Round__c;
+                    prEn.hed__Enrollment_Status__c = 'Active';
+                    enrollmentList.add(prEn);
+                    if(!contactToAcademic.containsKey(participants.contactID))
+                        contactToAcademic.put(participants.contactID,new set<id>{opp.OpportunityLineItems[0].Product2.Program_Plan__r.hed__Account__c});
+                    else 
+                        contactToAcademic.get(participants.contactID).add(opp.OpportunityLineItems[0].Product2.Program_Plan__r.hed__Account__c);
+                    
+                    notAffiliatedContacts.add(participants.contactID);
+                    
+                    
+                }
+            }
+                
+        }
+             
+        if(!enrollmentList.isEmpty()){
+            insert enrollmentList;
+            
+        }
+            
+        if(!contactToAcademic.isEmpty()){
+            
+            for(hed__Affiliation__c affliation : [select id,hed__Account__c,hed__Contact__c 
+                                                        from hed__Affiliation__c 
+                                                        where hed__Contact__c in : contactToAcademic.keySet()]){
+                if(contactToAcademic.containsKey(affliation.hed__Contact__c)){
+                    notAffiliatedContacts.remove(affliation.hed__Contact__c);
+                    if(contactToAcademic.get(affliation.hed__Contact__c).contains(affliation.hed__Account__c))
+                        contactToAcademic.get(affliation.hed__Contact__c).remove(affliation.hed__Account__c);
+                }
+                
+            }
+        }
+        
+        List<hed__Affiliation__c> affliationList = new List<hed__Affiliation__c>();
+        if(!contactToAcademic.isEmpty()){
+            for(id contId : contactToAcademic.keySet()){
+                if(!contactToAcademic.get(contId).isEmpty()){
+                    for(id AccId : contactToAcademic.get(contId)){
+                        hed__Affiliation__c aff = new hed__Affiliation__c();
+                        aff.hed__Account__c = AccId;
+                        aff.hed__Contact__c = contId;
+                        affliationList.add(aff);
+                    }
+                }
+            }
+            
+        }
+
+        if(!affliationList.isEmpty())
+            insert affliationList;
+        //}
+    }
+}
