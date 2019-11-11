@@ -1,0 +1,115 @@
+public with sharing class ContactTriggerHelper {
+    
+    public static void InsertCommunityUserAndAssignToContact(List<Contact> contactList) {
+        if(!contactList.isEmpty()) {
+            set<Id> ContactIds = new set<Id>();
+            for(Contact con : contactList)ContactIds.add(con.Id);
+            //filter out existing contacts with user accounts from the list
+            Map<Id, User> filterList = new Map<Id, User>([select Id from User where ContactId IN : ContactIds]);
+            Map<Id,Id> filterContactUserMap = new Map<Id,Id>();
+            List<User> communityUserList = new List<User>();
+            Profile communityProfile = [select Id from Profile where Name = 'Customer Community Plus Login User'];
+            if(!filterList.isEmpty()) {
+                for(User userRec : filterList.values()) {
+                    filterContactUserMap.put(userRec.ContactId,userRec.Id);
+                }
+            }        
+            for(Contact con : contactList) {
+                Id searchFilterListId = null;
+                searchFilterListId = filterContactUserMap.get(con.Id);
+                if(searchFilterListId != null) {
+                    continue;
+                }
+                User u = new user();
+                    u.FirstName = con.FirstName;
+                    u.LastName = con.LastName;
+                    u.Email = con.Email;
+                    u.ContactId = con.Id;
+                    u.Alias = con.LastName.substring(0,3);
+                    u.Username = con.Email;
+                    u.CommunityNickname = con.FirstName.substring(0,3) + con.LastName.substring(0,3);
+                    u.LocaleSidKey = 'en_US';
+                    u.TimeZoneSidKey = 'Europe/Paris';
+                    u.ProfileID = communityProfile.Id;
+                    u.LanguageLocaleKey = 'en_US';
+                    u.EmailEncodingKey = 'UTF-8';
+                    communityUserList.add(u);
+            }
+            if(!communityUserList.isEmpty()) {
+            insert communityUserList; 
+            }                    
+        }
+    }
+
+     public static void CreateAdviseeCaseRecordForNewContacts(List<Contact> contactList) {
+                                      
+        List<Case> newCases = new List<Case>();                        
+        Id adviseeCaseRecordTypeId = Schema.SObjectType.Case.getRecordTypeInfosByName().get('Advisee Record').getRecordTypeId();
+        for(Contact con : contactList) {                
+                Case caseRec = new Case();
+                caseRec.RecordTypeId = adviseeCaseRecordTypeId;
+                caseRec.AccountId = con.AccountId;
+                caseRec.ContactId = con.Id;
+                caseRec.Status = 'New';
+                caseRec.Origin = 'Web';
+                newCases.add(caseRec);                                  
+        }
+        if(!newCases.isEmpty()) {
+            insert newCases; 
+        }                    
+    }
+
+    public static void CreateAuthorizationFormConsentRecordForContactOnInsert(List<Contact> contactList) {
+        //this method goes and sets up the required AuthorizationFormConsent records for every contact that is created in the system.
+        List<AuthorizationFormConsent> AFCCollection = new List<AuthorizationFormConsent>();        
+        //TODO: This is explicit, we can find a more dynamic way to do this such as storing it in a custom setting but it is not vital currently.        
+        set<string> AFTRecordByName = new set<string>();
+        AFTRecordByName.add('Email Newsletter');
+        AFTRecordByName.add('Email Newsletter');
+        AFTRecordByName.add('Email Newsletter');
+        Map<string,Id> mapNametoId = new Map<string,Id>();
+        for(AuthorizationFormText AFTRec : [select Id, Name FROM AuthorizationFormText where Name IN : AFTRecordByName]) {
+                mapNametoId.put(AFTRec.Name,AFTRec.Id);
+        }
+        
+        for(Contact con : contactList) {
+            
+            for(string AFTName : mapNametoId.keySet()) {
+                AuthorizationFormConsent afcRecord = new AuthorizationFormConsent();     
+                afcRecord.Contact__c = con.Id;
+                //afcRecord.ConsentGiver = con.Id;
+                afcRecord.AuthorizationFormTextId = mapNametoId.get(AFTName);
+                afcRecord.Name = AFTName;                
+                AFCCollection.add(afcRecord);
+            }
+           
+        }
+        if(!AFCCollection.isEmpty())insert AFCCollection;
+    }
+
+    public static void FilterNotConsentedDyingRecordsFromMergeAction(List<AuthorizationFormConsent> AFCList) {
+        Map<string,AuthorizationFormConsent> AFCDistinctMap = new Map<string,AuthorizationFormConsent>();
+        List<AuthorizationFormConsent> finalListToSave = new List<AuthorizationFormConsent>();
+        set<Id> contactIds = new set<Id>();
+        for(AuthorizationFormConsent rec :  AFCList) {
+            contactIds.add(rec.Contact__c);
+        }        
+        Map<Id,AuthorizationFormConsent> existingAuthorizationFormConsentByContactId  = new  Map<Id,AuthorizationFormConsent>([select Id, Contact__c,AuthorizationFormTextId,Name FROM  AuthorizationFormConsent where Contact__c IN :contactIds]);
+        for( AuthorizationFormConsent rec : existingAuthorizationFormConsentByContactId.values()) {
+            AFCDistinctMap.put(rec.Name,rec);
+        }
+        for(AuthorizationFormConsent rec : AFCList) {
+            AuthorizationFormConsent existingAFCRec = AFCDistinctMap.get(rec.Name);
+            if(existingAFCRec != null) {
+                /*
+                if(existingAFCRec.[NOTCHECKED] == rec.[ISCHECKED]) {                     
+                     finalListToSave.add(rec);   
+                }
+                */
+            } else {
+                finalListToSave.add(rec);
+            }
+            
+        }
+    }
+}
