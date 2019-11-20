@@ -1,4 +1,4 @@
-/##############################################
+/*********************************************
 Apex can be invoked by using triggers. Apex triggers enable you to perform custom actions before or after changes to Salesforce records, such as insertions, updates, or deletions.
 A trigger is Apex code that executes before or after the following types of operations:
 
@@ -9,14 +9,14 @@ merge
 upsert
 undelete
 
-/##############################################
+/*********************************************
 Trigger Best Practices:
 
 One Trigger per Object
 Logic-less trigger
 Context-specific handler methods
 
-/##############################################
+/*********************************************
 Why Use a Framework?
 Now, we have some best practices you must be thinking that what if I am following all the best practices do I need to use the trigger framework. The simple answer is No.
 
@@ -30,7 +30,7 @@ Implement tools, utilities, and abstractions to make your handler logic as light
 Assure the Order of execution of the code
 Prevent the recursion.
 Ensure that trigger will do not create any issue while working with large datasets.
- 
+*********************************************/
 
 
 /*********************************************
