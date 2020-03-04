@@ -1,0 +1,261 @@
+public class QuoteInitializationAutomation{
+    
+    public static void initializeQuoteLines(list<SBQQ__Quote__c> TriggerNew, Map<Id,SBQQ__Quote__c> TriggerOldMap,string event){
+    
+        // TEMPORARY SOLUTION. TODO
+        //for (SBQQ__Quote__c quote : TriggerNew) {
+          //  if (quote.PricingChange__c == false)
+            //    return;
+        //}
+    
+        list<SBQQ__Quote__c> quotesToInsertLineItems=new list<SBQQ__Quote__c>();
+        // Map <opportunityID, List<accountID>>
+        map<id,set<id>> contractPartyAccountIds=new map<id,set<id>>();
+        // Map<quoteID,OPPORTUNITYid>
+        map<id,id> mapQuoteOpportunity=new map<id,id>();
+        //Map<accountID, List<PurchaseHistoryBucket__c>>
+        map<id,list<PurchaseHistoryBucket__c>> mapPurchaseHistoryLines=new map<id,list<PurchaseHistoryBucket__c>>();
+        map<id,String> mapPurchaseHistoryParentProduct=new map<id,String>();
+        map<id,id> mapPurchaseHistoryChildProduct=new map<id,id>();
+        
+        //New quote lines to insert
+        Set<PurchaseHistoryBucket__c > PhbGrouPQuoteLines=new Set<PurchaseHistoryBucket__c >();
+        list<SBQQ__QuoteLine__c> childQuoteLinesToInsert=new list<SBQQ__QuoteLine__c>();
+        list<PurchaseHistoryBucket__c> allPhb=new list<PurchaseHistoryBucket__c>();
+        // Map<productid,list<QuoteLinesTocreateChild>>
+        map<id,SBQQ__QuoteLine__c> mapProductListNewQuoteLineItemsChild=new map<id,SBQQ__QuoteLine__c>();
+        // Map<productid,list<QuoteLinesTocreateParent>>
+        map<id,SBQQ__QuoteLine__c> mapProductListNewQuoteLineItemsParent=new map<id,SBQQ__QuoteLine__c>();
+        // Map<Quote,list<SBQQ__QuoteLine__c>> used  for upddaing SBQQ__Number__c
+        map<SBQQ__Quote__c, list<SBQQ__QuoteLine__c>>mapQuoteQuoteLineParent = new map<SBQQ__Quote__c, list<SBQQ__QuoteLine__c>>();
+        // Map<Quote,list<SBQQ__QuoteLine__c>> used  for upddaing SBQQ__Number__c
+        map<SBQQ__Quote__c,list<SBQQ__QuoteLine__c>>mapQuoteQuoteLineChild = new map<SBQQ__Quote__c,list<SBQQ__QuoteLine__c>>();
+        List<SBQQ__QuoteLine__c > quoteLinetobeUpdated = new List<SBQQ__QuoteLine__c>();
+        List<SBQQ__QuoteLineGroup__c > quoteLineGroupStandardtobInserted = new List<SBQQ__QuoteLineGroup__c>();
+        List<SBQQ__QuoteLineGroup__c > quoteLineGroupGFtobInserted = new List<SBQQ__QuoteLineGroup__c>();
+        //map of quote id and Quote Line Group for standard and GF
+        map<id, id>mapQuoteQuoteLineGroupstandard = new map<id, id>();
+        map<id, id>mapQuoteQuoteLineGroupsGF = new map<id, id>();
+        
+        
+        // Map<list<QuoteLinesTocreateChild>,productid>
+        map<SBQQ__QuoteLine__c,id> mapNewQuoteLineItemsChildProductList=new map<SBQQ__QuoteLine__c,id>();
+        // Map<list<QuoteLinesTocreateParent>,productid>
+        map<SBQQ__QuoteLine__c,id> mapNewQuoteLineItemsParentProductList=new map<SBQQ__QuoteLine__c,id>();
+        set<Id> productId= new  set<Id>();
+        map<id,String> mapProductPriceEntity= new  map<id,String>();
+        
+        for(SBQQ__Quote__c singleQuote :TriggerNew){
+            //system.debug('##singleQuote '+TriggerNew);
+            if(singleQuote.SBQQ__Opportunity2__c!=null && singleQuote.SBQQ__Account__c!=null){
+                mapQuoteOpportunity.put(singleQuote.id,singleQuote.SBQQ__Opportunity2__c);
+                quotesToInsertLineItems.add(singleQuote);
+            }
+        }
+        //create Quote Line Group Standard Products and Gases & Refrigerants
+        for(SBQQ__Quote__c singleQuote :quotesToInsertLineItems){
+            SBQQ__QuoteLineGroup__c quoteLineGroupStandard = new SBQQ__QuoteLineGroup__c ();
+            quoteLineGroupStandard.Name = 'Standard Products';
+            quoteLineGroupStandard.SBQQ__Account__c = singleQuote.SBQQ__Account__c;
+            quoteLineGroupStandard.SBQQ__Quote__c = singleQuote.id;
+            quoteLineGroupStandardtobInserted.add(quoteLineGroupStandard);
+            
+            SBQQ__QuoteLineGroup__c quoteLineGroupGR = new SBQQ__QuoteLineGroup__c ();
+            quoteLineGroupGR.Name = 'Gases & Refrigerants';
+            quoteLineGroupGR.SBQQ__Account__c = singleQuote.SBQQ__Account__c;
+            quoteLineGroupGR.SBQQ__Quote__c = singleQuote.id;
+            quoteLineGroupGFtobInserted.add(quoteLineGroupGR);
+        }
+        
+        insert quoteLineGroupStandardtobInserted;
+        insert quoteLineGroupGFtobInserted;
+        
+        for(SBQQ__QuoteLineGroup__c quoteLineGroup : [SELECT id,SBQQ__Quote__c
+                                                      FROM SBQQ__QuoteLineGroup__c
+                                                      WHERE Id IN: quoteLineGroupStandardtobInserted]){
+                                                          mapQuoteQuoteLineGroupstandard.put(quoteLineGroup.SBQQ__Quote__c,quoteLineGroup.id);                       
+                                                      }
+        
+        for(SBQQ__QuoteLineGroup__c quoteLineGroup : [SELECT id,SBQQ__Quote__c
+                                                      FROM SBQQ__QuoteLineGroup__c
+                                                      WHERE Id IN: quoteLineGroupGFtobInserted]){
+                                                          mapQuoteQuoteLineGroupsGF.put(quoteLineGroup.SBQQ__Quote__c,quoteLineGroup.id);                       
+                                                      }
+        
+        
+        // Query ContractParty__c:Junction between opportunity and account, indicating contract parties to quote.
+        set<id> accountIds=new set<id>();
+        for (ContractParty__c contractParty:[SELECT id,
+                                             Opportunity__c,
+                                             Account__c
+                                             FROM ContractParty__c
+                                             WHERE Opportunity__c IN: mapQuoteOpportunity.values()
+                                             AND Account__c!=null]){
+                                                 accountIds.add(contractParty.Account__c);
+                                                 if (contractPartyAccountIds.get(contractParty.Opportunity__c) == null)
+                                                     contractPartyAccountIds.put(contractParty.Opportunity__c, new set<id>());
+                                                 contractPartyAccountIds.get(contractParty.Opportunity__c).add(contractParty.Account__c);
+                                             }
+        //Need to limit the lines , since CPQ cannot handle too large quotes
+        for(PurchaseHistoryBucket__c phb : [SELECT Account__c,
+                                            ParentProduct2Id__c,// TO USE TO SET REQUIRED BY ON LINE ITEM
+                                            ProductCode__c,
+                                            Product__c,
+                                            MainProductOptionId__c,
+                                            Quantity__c
+                                            FROM PurchaseHistoryBucket__c
+                                            WHERE Account__c IN: accountIds
+                                            AND Quantity__c>0 AND ProductIsActive__c=true
+                                            ORDER BY ProductCode__c ASC
+                                            LIMIT 400]){
+                                                system.debug('##_PurchaseHistoryBucket__c'+phb);
+                                                if (mapPurchaseHistoryLines.get(phb.Account__c) == null)
+                                                    mapPurchaseHistoryLines.put(phb.Account__c, new List<PurchaseHistoryBucket__c>());
+                                                mapPurchaseHistoryLines.get(phb.Account__c).add(phb);
+                                                mapPurchaseHistoryParentProduct.put(phb.Account__c,phb.ParentProduct2Id__c);
+                                                mapPurchaseHistoryChildProduct.put(phb.Account__c,phb.Product__c); 
+                                                productId.add(phb.ParentProduct2Id__c);
+                                                productId.add(phb.Product__c);                          
+                                                
+                                            }
+        
+        for(Product2 product : [SELECT PricingType__c
+                                FROM Product2
+                                WHERE Id IN: productId]){
+                                    mapProductPriceEntity.put(product.id,product.PricingType__c);                          
+                                    
+                                }
+
+        // CREATE PARENT LINE ITEMS
+        for(SBQQ__Quote__c singleQuote :quotesToInsertLineItems){
+            set<id> quoteContractPartyAccountIDs=contractPartyAccountIds.get(singleQuote.SBQQ__Opportunity2__c);
+            for (id  accountID: quoteContractPartyAccountIDs){
+                if(mapPurchaseHistoryLines.get(accountID)!=null){
+                    //iterate on all the purchase history buckets
+                    if(mapPurchaseHistoryLines.get(accountID)==null){
+                        continue;
+                    }
+                    for(PurchaseHistoryBucket__c phbQuote: mapPurchaseHistoryLines.get(accountID)){
+                        if(mapProductListNewQuoteLineItemsParent.keyset().contains(phbQuote.ParentProduct2Id__c)==false){
+                            //Product was not considered before, create a new quote line item for this product
+                            SBQQ__QuoteLine__c newQuoteLineChildParent=new SBQQ__QuoteLine__c();
+                            newQuoteLineChildParent.SBQQ__Quote__c=singleQuote.id;
+                            newQuoteLineChildParent.SBQQ__Product__c=phbQuote.ParentProduct2Id__c;
+                            newQuoteLineChildParent.SBQQ__ProductOption__c = phbQuote.MainProductOptionId__c;
+                            newQuoteLineChildParent.SBQQ__ProductSubscriptionType__c  = 'One-time';
+                            newQuoteLineChildParent.SBQQ__SubscriptionType__c  = 'One-time';
+                            //Parent Line Items should always have quantity=1
+                            newQuoteLineChildParent.LastYearQty__c=1;
+                            mapProductListNewQuoteLineItemsParent.put(phbQuote.ParentProduct2Id__c,newQuoteLineChildParent);
+                            mapQuoteQuoteLineParent.put(singleQuote,mapProductListNewQuoteLineItemsParent.values());
+                            if (mapProductPriceEntity.get(newQuoteLineChildParent.SBQQ__Product__c)!=null && mapProductPriceEntity.get(newQuoteLineChildParent.SBQQ__Product__c).equals('Zone')){
+                                newQuoteLineChildParent.SBQQ__Group__c = mapQuoteQuoteLineGroupstandard.get(singleQuote.id);
+                            }
+                            else if (mapProductPriceEntity.get(newQuoteLineChildParent.SBQQ__Product__c)!=null && mapProductPriceEntity.get(newQuoteLineChildParent.SBQQ__Product__c).equals('Group')){
+                                newQuoteLineChildParent.SBQQ__Group__c = mapQuoteQuoteLineGroupsGF.get(singleQuote.id);
+                            }
+                            else {
+                                newQuoteLineChildParent.SBQQ__Group__c = mapQuoteQuoteLineGroupstandard.get(singleQuote.id);
+                            }
+                        
+                        }
+                        
+                    }
+                }
+            }
+        }
+        
+        //Create quote lines
+        if(mapProductListNewQuoteLineItemsParent.values().size()>0){
+            insert mapProductListNewQuoteLineItemsParent.values();
+        }
+        
+        
+        //History has Product__c and ParentProduct2Id__c
+        //Product Hierarchy is 2 levels deeep
+        // CREATE CHILD LINE ITEMS
+        for(SBQQ__Quote__c singleQuote :quotesToInsertLineItems){
+            set<id> quoteContractPartyAccountIDs=contractPartyAccountIds.get(singleQuote.SBQQ__Opportunity2__c);
+            for (id  accountID: quoteContractPartyAccountIDs){
+                if(mapPurchaseHistoryLines.get(accountID)!=null){
+                    if(mapPurchaseHistoryLines.get(accountID)==null){
+                        continue;
+                    }
+                    //iterate on all the purchase history buckets
+                    for(PurchaseHistoryBucket__c phbQuote: mapPurchaseHistoryLines.get(accountID)){
+                        if(mapProductListNewQuoteLineItemsChild.keyset().contains(phbQuote.Product__c)==false){
+                            //Product was not considered before, create a new quote line item for this product
+                            SBQQ__QuoteLine__c newQuoteLineChild=new SBQQ__QuoteLine__c();
+                            newQuoteLineChild.SBQQ__Quote__c=singleQuote.id;
+                            newQuoteLineChild.SBQQ__Product__c=phbQuote.Product__c;
+                            newQuoteLineChild.LastYearQty__c=phbQuote.Quantity__c;
+                            newQuoteLineChild.SBQQ__ProductOption__c = phbQuote.MainProductOptionId__c;
+                            newQuoteLineChild.SBQQ__OptionLevel__c  = 1;
+                            newQuoteLineChild.SBQQ__ProductSubscriptionType__c  = 'One-time';
+                            newQuoteLineChild.SBQQ__SubscriptionType__c  = 'One-time';
+                            // Set the parent line item on the child line item
+                            if(mapProductListNewQuoteLineItemsParent.get(phbQuote.ParentProduct2Id__c)!=null){
+                                SBQQ__QuoteLine__c parentLineItem=new SBQQ__QuoteLine__c();
+                                parentLineItem=mapProductListNewQuoteLineItemsParent.get(phbQuote.ParentProduct2Id__c);
+                                if(parentLineItem!=null && parentLineItem.id!=null){
+                                    newQuoteLineChild.SBQQ__RequiredBy__c=parentLineItem.id;
+                                }
+                            }
+                            if ( mapProductPriceEntity.get(newQuoteLineChild.SBQQ__Product__c)!=null && mapProductPriceEntity.get(newQuoteLineChild.SBQQ__Product__c).equals('Zone')){
+                                newQuoteLineChild.SBQQ__Group__c = mapQuoteQuoteLineGroupstandard.get(singleQuote.id);
+                            }
+                            else if (mapProductPriceEntity.get(newQuoteLineChild.SBQQ__Product__c)!=null && mapProductPriceEntity.get(newQuoteLineChild.SBQQ__Product__c).equals('Group')){
+                                newQuoteLineChild.SBQQ__Group__c = mapQuoteQuoteLineGroupsGF.get(singleQuote.id);
+                            }
+                            else {
+                                newQuoteLineChild.SBQQ__Group__c = mapQuoteQuoteLineGroupstandard.get(singleQuote.id);
+                                
+                            }
+                            
+                            childQuoteLinesToInsert.add(newQuoteLineChild);
+                            mapQuoteQuoteLineChild.put(singleQuote,childQuoteLinesToInsert);
+                            
+                            mapProductListNewQuoteLineItemsChild.put(phbQuote.Product__c,newQuoteLineChild);
+                        }
+                        else{
+                            // Product It´s already in the map don´t create a new line item but update the existing one
+                            SBQQ__QuoteLine__c newQuoteLine=mapProductListNewQuoteLineItemsChild.get(phbQuote.Product__c);
+                            //     system.debug('#newQuoteLine'+newQuoteLine);
+                            if(newQuoteLine!=null && phbQuote.Quantity__c!=null){
+                                newQuoteLine.LastYearQty__c=newQuoteLine.LastYearQty__c+phbQuote.Quantity__c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        //Create quote lines
+        if(childQuoteLinesToInsert.size()>0){
+            insert childQuoteLinesToInsert;
+        }
+
+        
+        for(SBQQ__Quote__c singleQuote :quotesToInsertLineItems){
+            if(mapPurchaseHistoryLines!=null){
+                Decimal quoteLineNumber=1;
+                if(mapQuoteQuoteLineParent!=null && mapQuoteQuoteLineParent.size() > 0){
+                    for(SBQQ__QuoteLine__c quoteline : mapQuoteQuoteLineParent.get(singleQuote)){
+                        quoteline.SBQQ__Number__c=quoteLineNumber;
+                        quoteLinetobeUpdated.add(quoteline);
+                        for(SBQQ__QuoteLine__c quoteline1 : mapQuoteQuoteLineChild.get(singleQuote)){
+                            if (quoteline1.SBQQ__RequiredBy__c==quoteline.id){
+                                quoteline1.SBQQ__Number__c=quoteline.SBQQ__Number__c+1;
+                                quoteLineNumber=quoteline1.SBQQ__Number__c+1;
+                                quoteLinetobeUpdated.add(quoteline1);
+                            }
+                            
+                        }
+                        
+                    }
+                }
+            }
+            
+        }
+        update quoteLinetobeUpdated;
+    }
+}
